@@ -1,8 +1,9 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { CategoryService } from '../utils/CategoryService';
   import { StorageService } from '../utils/StorageService';
   import MemoryStats from './MemoryStats.svelte';
+  import { MemoryService } from '../utils/MemoryService';
   
   /** @type {chrome.tabs.Tab} */
   export let tab;
@@ -15,6 +16,7 @@
   export let onTogglePin;
   
   let categoryService = new CategoryService();
+  let memoryService = new MemoryService();
   let currentCategory = '未分类';
   let showCategorySelect = false;
   let isBookmarked = false;
@@ -22,14 +24,21 @@
   let isMuted = false;
   let isHovered = false;
   let predictedCategory = '其他';
+  let faviconUrl = '';
+  let cachedFavicon = new Map();
+  let isHibernated = false;
   
-  onMount(() => {
+  onMount(async () => {
     isMuted = tab.mutedInfo?.muted || false;
+    await memoryService.loadHibernatedState();
+    isHibernated = memoryService.isTabHibernated(tab.id);
+    await updateFavicon();
   });
 
   onMount(async () => {
     await categoryService.initialize();
     predictedCategory = await categoryService.predictCategory(tab);
+    await updateFavicon();
   });
 
   async function checkBookmarkStatus() {
@@ -54,35 +63,7 @@
       bookmarkId = bookmark.id;
     }
   }
-  
-  async function duplicateTab() {
-    await chrome.tabs.duplicate(tab.id);
-  }
-  
-  async function reloadTab() {
-    await chrome.tabs.reload(tab.id);
-  }
-  
-  async function moveToNewWindow() {
-    await chrome.windows.create({ tabId: tab.id });
-  }
 
-  async function handleCategoryChange(newCategory) {
-    currentCategory = newCategory;
-    if (onCategoryChange) {
-      await onCategoryChange(tab.id, newCategory);
-    }
-    await StorageService.addToCategoryHistory({
-      url: tab.url,
-      title: tab.title,
-      favIconUrl: tab.favIconUrl
-    }, newCategory);
-    showCategorySelect = false;
-  }
-
-  function stopPropagation(event) {
-    event.stopPropagation();
-  }
 
   function handleKeyDown(event, callback) {
     if (event.key === 'Enter' || event.key === ' ') {
@@ -142,6 +123,62 @@
     predictedCategory = newCategory;
     await categoryService.trainOnUserFeedback(tab, newCategory);
   }
+
+  async function updateFavicon() {
+    try {
+      if (tab.id && cachedFavicon.has(tab.id)) {
+        faviconUrl = cachedFavicon.get(tab.id);
+        return;
+      }
+
+      if (tab.favIconUrl) {
+        faviconUrl = tab.favIconUrl;
+      } else {
+        const results = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: () => {
+            const link = document.querySelector('link[rel*="icon"]');
+            return link ? link.href : null;
+          }
+        });
+        
+        if (results && results[0] && results[0].result) {
+          faviconUrl = results[0].result;
+        }
+      }
+
+      if (tab.id) {
+        cachedFavicon.set(tab.id, faviconUrl);
+      }
+    } catch (error) {
+      console.error('获取图标失败:', error);
+      faviconUrl = '';
+    }
+  }
+
+  $: if (tab) {
+    updateFavicon();
+  }
+
+  onDestroy(() => {
+    if (tab.id) {
+      cachedFavicon.delete(tab.id);
+    }
+  });
+
+  async function toggleHibernate() {
+    try {
+      if (isHibernated) {
+        await memoryService.restoreTab(tab.id);
+        isHibernated = false;
+      } else {
+        await memoryService.hibernateTab(tab);
+        isHibernated = true;
+      }
+    } catch (error) {
+      console.error('切换休眠状态失败:', error);
+    }
+  }
 </script>
 
 <div 
@@ -157,12 +194,38 @@
     tabindex="0"
     on:keydown={(e) => handleKeyDown(e, activateTab)}
   >
-    <img 
-      src={tab.favIconUrl || defaultIcon} 
-      alt="" 
-      class="w-4 h-4 mr-2 flex-shrink-0"
-      on:error={(e) => e.target.src = defaultIcon}
-    />
+    <div class="w-6 h-6 flex-shrink-0 relative mr-2">
+      {#if faviconUrl}
+        <div class="w-full h-full flex items-center justify-center">
+          <img
+            src={faviconUrl}
+            alt=""
+            class="w-4 h-4 object-contain transition-all duration-200"
+            style="image-rendering: -webkit-optimize-contrast;"
+            referrerpolicy="no-referrer"
+            crossorigin="anonymous"
+            on:error={(e) => {
+              console.log(`图标加载失败: ${faviconUrl}`);
+              e.target.style.display = 'none';
+              e.target.nextElementSibling.style.display = 'flex';
+            }}
+          />
+          <div 
+            class="w-5 h-5 bg-gray-100 rounded-full hidden items-center justify-center text-xs text-gray-600 font-medium absolute"
+            style="text-rendering: optimizeLegibility;"
+          >
+            {tab.title.charAt(0).toUpperCase()}
+          </div>
+        </div>
+      {:else}
+        <div 
+          class="w-5 h-5 bg-gray-100 rounded-full flex items-center justify-center text-xs text-gray-600 font-medium"
+          style="text-rendering: optimizeLegibility;"
+        >
+          {tab.title.charAt(0).toUpperCase()}
+        </div>
+      {/if}
+    </div>
     <div class="flex-1 min-w-0">
       <div class="font-medium truncate">{tab.title}</div>
       <div class="flex items-center space-x-2 min-w-0">
@@ -196,6 +259,14 @@
         📝
       </button>
     {/if}
+
+    <button
+      class="p-1 hover:bg-gray-200 rounded {isHibernated ? 'text-blue-500' : 'text-gray-500'}"
+      on:click|stopPropagation={toggleHibernate}
+      title={isHibernated ? "恢复标签页" : "休眠标签页"}
+    >
+      {isHibernated ? '💤' : '🌙'}
+    </button>
 
     <button
       class="p-1 hover:bg-gray-200 rounded {tab.pinned ? 'text-blue-500' : ''}"

@@ -6,6 +6,9 @@ export class MemoryService {
     this.lastAccessTimes = new Map();
     this.debuggerConnections = new Map();
     this.autoHibernateEnabled = true;
+    
+    // 初始化时从存储中加载休眠状态
+    this.loadHibernatedState();
     console.log('MemoryService initialized');
     this.initializeListeners();
     this.initializeDebugger();
@@ -34,15 +37,21 @@ export class MemoryService {
   }
 
   async initializeDebugger() {
+    // 检查是否有 debugger API
+    if (!chrome.debugger) {
+      console.log('Debugger API not available');
+      return;
+    }
+
     try {
-      // 获取所有可调试目标
-      const targets = await chrome.debugger.getTargets();
-      console.log('Available debug targets:', targets);
+      // 改用 chrome.tabs.query 来获取所有标签页
+      const tabs = await chrome.tabs.query({});
+      console.log('Available tabs:', tabs);
       
       // 为每个标签页附加调试器
-      for (const target of targets) {
-        if (target.type === 'page' && !this.debuggerConnections.has(target.tabId)) {
-          await this.attachDebugger(target.tabId);
+      for (const tab of tabs) {
+        if (!this.debuggerConnections.has(tab.id)) {
+          await this.attachDebugger(tab.id);
         }
       }
     } catch (error) {
@@ -51,12 +60,44 @@ export class MemoryService {
   }
 
   async attachDebugger(tabId) {
+    if (!chrome.debugger) return;
+    
     try {
-      await chrome.debugger.attach({ tabId }, '1.3');
+      // 先检查调试器是否已经附加
+      const targets = await new Promise((resolve) => {
+        chrome.debugger.getTargets((targets) => resolve(targets || []));
+      });
+      
+      const isAttached = targets.some(t => t.tabId === tabId && t.attached);
+      if (isAttached) {
+        console.log(`Debugger already attached to tab ${tabId}`);
+        this.debuggerConnections.set(tabId, true);
+        return;
+      }
+
+      await new Promise((resolve, reject) => {
+        chrome.debugger.attach({ tabId }, '1.3', () => {
+          if (chrome.runtime.lastError) {
+            reject(chrome.runtime.lastError);
+          } else {
+            resolve();
+          }
+        });
+      });
+
       console.log(`Debugger attached to tab ${tabId}`);
       
       // 启用内存相关的域
-      await chrome.debugger.sendCommand({ tabId }, 'Memory.enable');
+      await new Promise((resolve, reject) => {
+        chrome.debugger.sendCommand({ tabId }, 'Memory.enable', {}, () => {
+          if (chrome.runtime.lastError) {
+            reject(chrome.runtime.lastError);
+          } else {
+            resolve();
+          }
+        });
+      });
+
       this.debuggerConnections.set(tabId, true);
     } catch (error) {
       console.error(`Failed to attach debugger to tab ${tabId}:`, error);
@@ -234,6 +275,7 @@ export class MemoryService {
       await chrome.tabs.update(tab.id, { url: hibernateUrl });
 
       this.hibernatedTabs.add(tab.id);
+      await this.saveHibernatedState(); // 保存状态
     } catch (error) {
       console.error('休眠标签页失败:', error);
     }
@@ -248,6 +290,7 @@ export class MemoryService {
         await chrome.tabs.update(tabId, { url: tabInfo.url });
         await chrome.storage.local.remove(`hibernated_${tabId}`);
         this.hibernatedTabs.delete(tabId);
+        await this.saveHibernatedState(); // 保存状态
         this.memoryStats.delete(tabId);
       }
     } catch (error) {
@@ -379,5 +422,58 @@ export class MemoryService {
       totalJS: memoryValue,
       timestamp: Date.now()
     };
+  }
+
+  async getFavicon(tab) {
+    try {
+      // 使用 chrome.tabs API 获取标签页信息
+      const tabInfo = await chrome.tabs.get(tab.id);
+      if (tabInfo.favIconUrl) {
+        return tabInfo.favIconUrl;
+      }
+      
+      // 如果没有直接的 favicon，尝试从页面中获取
+      const results = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: () => {
+          // 尝试获取页面中的 favicon
+          const link = document.querySelector('link[rel*="icon"]');
+          return link ? link.href : null;
+        }
+      });
+      
+      if (results && results[0] && results[0].result) {
+        return results[0].result;
+      }
+      
+      // 如果都没有找到，返回空字符串
+      return '';
+    } catch (error) {
+      console.log('获取 favicon 失败:', error);
+      return '';
+    }
+  }
+
+  // 加载休眠状态
+  async loadHibernatedState() {
+    try {
+      const result = await chrome.storage.local.get('hibernatedTabs');
+      if (result.hibernatedTabs) {
+        this.hibernatedTabs = new Set(result.hibernatedTabs);
+      }
+    } catch (error) {
+      console.error('加载休眠状态失败:', error);
+    }
+  }
+
+  // 保存休眠状态
+  async saveHibernatedState() {
+    try {
+      await chrome.storage.local.set({
+        hibernatedTabs: Array.from(this.hibernatedTabs)
+      });
+    } catch (error) {
+      console.error('保存休眠状态失败:', error);
+    }
   }
 } 

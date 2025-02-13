@@ -64,29 +64,40 @@ export class TabGroupService {
   // 按最近使用时间分组
   groupByLastAccess(tabs) {
     const now = Date.now();
-    const groups = {
-      recent: { title: '最近半小时内使用', tabs: [] },
-      sixHours: { title: '最近6小时内使用', tabs: [] },
-      today: { title: '最近24小时内使用', tabs: [] },
-      older: { title: '长时间未使用', tabs: [] }
-    };
+    const groups = [
+      { title: '最近访问', tabs: [] },
+      { title: '今天访问', tabs: [] },
+      { title: '最近7天', tabs: [] },
+      { title: '更早', tabs: [] }
+    ];
 
     tabs.forEach(tab => {
-      const lastAccess = this.lastAccessTimes.get(tab.id) || now;
-      const diff = now - lastAccess;
+      const lastAccessed = tab.lastAccessed || now;
+      const diffMinutes = (now - lastAccessed) / (1000 * 60);
+      const diffDays = (now - lastAccessed) / (1000 * 60 * 60 * 24);
 
-      if (diff < 30 * 60 * 1000) { // 30分钟内
-        groups.recent.tabs.push(tab);
-      } else if (diff < 6 * 60 * 60 * 1000) { // 6小时内
-        groups.sixHours.tabs.push(tab);
-      } else if (diff < 24 * 60 * 60 * 1000) { // 24小时内
-        groups.today.tabs.push(tab);
+      if (diffMinutes < 30) {
+        groups[0].tabs.push(tab);
+      } else if (diffDays < 1) {
+        groups[1].tabs.push(tab);
+      } else if (diffDays < 7) {
+        groups[2].tabs.push(tab);
       } else {
-        groups.older.tabs.push(tab);
+        groups[3].tabs.push(tab);
       }
     });
 
-    return Object.values(groups).filter(group => group.tabs.length > 0);
+    // 在每个组内按最后访问时间排序
+    groups.forEach(group => {
+      group.tabs.sort((a, b) => {
+        const aTime = a.lastAccessed || 0;
+        const bTime = b.lastAccessed || 0;
+        return bTime - aTime; // 降序排列
+      });
+    });
+
+    // 移除空组
+    return groups.filter(group => group.tabs.length > 0);
   }
 
   // 按域名分组

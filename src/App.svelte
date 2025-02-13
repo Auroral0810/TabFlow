@@ -72,7 +72,19 @@
         groupedTabs = [...groupedTabs, ...domainGroups];
         break;
       case 'time':
-        const timeGroups = tabGroupService.groupByLastAccess(unpinnedTabs);
+        // console.log('按时间分组处理开始');
+        const timeGroups = tabGroupService.groupByLastAccess(unpinnedTabs.map(tab => {
+          const memoryInfo = memoryService.getTabMemoryStats(tab.id);
+          const lastAccessed = tab?.lastAccessed || Date.now();
+          // console.log(`标签页 ${tab.id} - ${tab.title}`);
+          // console.log(`最后访问时间: ${new Date(lastAccessed).toLocaleString()}`);
+          // console.log(`内存信息:`, memoryInfo);
+          return {
+            ...tab,
+            lastAccessed
+          };
+        }));
+        // console.log('分组结果:', timeGroups);
         groupedTabs = [...groupedTabs, ...timeGroups];
         break;
       default:
@@ -198,8 +210,7 @@
     console.log('过滤后的分组:', groups);
   }
 </script>
-
-<div class="min-w-[800px] max-w-[1200px] bg-gradient-to-br from-blue-50 to-indigo-50 p-4 rounded-lg shadow-lg">
+<div class="w-[800px] h-[600px] bg-gradient-to-br from-blue-50 to-indigo-50 p-4 rounded-lg shadow-lg overflow-hidden">
   <!-- 顶部导航 -->
   <nav class="bg-white rounded-lg shadow-sm mb-4 p-1">
     <div class="flex items-center justify-between">
@@ -245,7 +256,7 @@
   {/if}
 
   <!-- 主要内容区域 -->
-  <main class="bg-white rounded-lg shadow-sm p-4">
+  <main class="bg-white rounded-lg shadow-sm p-4 h-[calc(100%-60px)] overflow-y-auto">
     {#if activeTab === 'tabs'}
       <!-- 标签页管理 -->
       <div class="mb-4 flex items-center justify-between">
@@ -325,11 +336,15 @@
     margin: 0;
     padding: 0;
     background: transparent;
+    width: 800px;
+    height: 600px;
+    overflow: hidden;
   }
 
   :global(html) {
     width: 800px;
     height: 600px;
+    overflow: hidden;
   }
 
   /* 自定义滚动条样式 */

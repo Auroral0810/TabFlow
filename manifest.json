@@ -4,13 +4,17 @@
   "version": "1.0",
   "description": "智能标签页管理工具",
   "permissions": [
+    "debugger",
     "tabs",
     "storage",
     "scripting",
-    "favicon"
+    "favicon",
+    "activeTab",
+    "identity"
   ],
   "host_permissions": [
-    "<all_urls>"
+    "<all_urls>",
+    "https://www.google.com/"
   ],
   "action": {
     "default_popup": "index.html",
@@ -30,22 +34,25 @@
     "128": "assets/icon128.png"
   },
   "oauth2": {
-    "client_id": "your-client-id",
+    "client_id": "1006825246149-YOUR_CLIENT_ID.apps.googleusercontent.com",
     "scopes": [
       "https://www.googleapis.com/auth/userinfo.email"
     ]
   },
   "web_accessible_resources": [{
-    "resources": ["*"],
+    "resources": ["icons/*"],
     "matches": ["<all_urls>"]
   }],
   "cross_origin_embedder_policy": {
-    "value": "credentialless"
+    "value": "require-corp"
   },
   "cross_origin_opener_policy": {
     "value": "same-origin"
   },
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'; img-src * data: chrome: https: http: chrome-extension:;"
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' https://*.firebaseio.com https://*.firebase.com https://*.googleapis.com;"
+  },
+  "cross_origin_resource_policy": {
+    "value": "cross-origin"
   }
 } 

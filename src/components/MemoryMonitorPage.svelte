@@ -6,8 +6,14 @@
   let tabs = [];
   let totalMemoryUsage = 0;
   let searchQuery = '';
-  let sortBy = 'memory'; // 'memory' | 'title' | 'lastAccess'
-  let sortDirection = 'desc';
+  
+  // 修改排序状态的数据结构，添加 domain
+  let sortConfig = {
+    title: null,      // null | 'asc' | 'desc'
+    domain: null,     // 添加域名排序
+    memory: 'desc',   // 默认按内存降序
+    lastAccess: null
+  };
   
   async function loadTabs() {
     console.log('Loading tabs...');
@@ -18,15 +24,15 @@
       console.log(`Processing tab ${tab.id}: ${tab.title}`);
       await memoryService.updateTabMemoryInfo(tab.id);
       const memoryInfo = memoryService.getTabMemoryStats(tab.id);
-      const isHibernated = memoryService.isTabHibernated(tab.id);
       console.log('memoryInfo:', memoryInfo);
+      const isHibernated = memoryService.isTabHibernated(tab.id);
       const tabInfo = {
         ...tab,
         memoryInfo,
         isHibernated,
         domain: new URL(tab.url).hostname,
-        memoryMB: memoryInfo.totalJS, // 直接使用 memoryInfo.totalJS 作为 memoryMB
-        lastAccess: memoryService.lastAccessTimes.get(tab.id) || Date.now()
+        memoryMB: memoryInfo.totalJS,
+        lastAccess: tab.lastAccessed
       };
       
       console.log('Tab info:', {
@@ -35,12 +41,11 @@
         memory: `${tabInfo.memoryMB}MB`,
         lastAccess: new Date(tabInfo.lastAccess).toLocaleString()
       });
-      console.log('Tab info1111:', tabInfo);
       return tabInfo;
     }));
     
     totalMemoryUsage = tabs.reduce((sum, tab) => sum + (tab.memoryMB || 0), 0);
-    console.log(`Total memory usage: ${totalMemoryUsage.toFixed(2)}MB`);
+    // console.log(`Total memory usage: ${totalMemoryUsage.toFixed(2)}MB`);
   }
   
   onMount(async () => {
@@ -50,19 +55,46 @@
     return () => clearInterval(interval);
   });
 
-  // 排序函数
-  $: sortedTabs = [...tabs].sort((a, b) => {
-    const direction = sortDirection === 'asc' ? 1 : -1;
-    switch (sortBy) {
+  // 处理排序点击
+  function handleSort(field) {
+    if (!sortConfig[field]) {
+      sortConfig[field] = 'desc';
+    } else if (sortConfig[field] === 'desc') {
+      sortConfig[field] = 'asc';
+    } else {
+      sortConfig[field] = null;
+    }
+    sortConfig = { ...sortConfig }; // 触发响应式更新
+  }
+
+  // 复合排序函数
+  function compareValues(a, b, field, direction) {
+    if (!direction) return 0;
+    
+    const multiplier = direction === 'asc' ? 1 : -1;
+    switch (field) {
       case 'memory':
-        return (a.memoryMB - b.memoryMB) * direction;
+        return (a.memoryMB - b.memoryMB) * multiplier;
       case 'title':
-        return a.title.localeCompare(b.title) * direction;
+        return a.title.localeCompare(b.title, 'zh-CN') * multiplier;
+      case 'domain':
+        return a.domain.localeCompare(b.domain, 'zh-CN') * multiplier;
       case 'lastAccess':
-        return (a.lastAccess - b.lastAccess) * direction;
+        const aTime = a.memoryInfo?.lastAccessed || 0;
+        const bTime = b.memoryInfo?.lastAccessed || 0;
+        return (aTime - bTime) * multiplier;
       default:
         return 0;
     }
+  }
+
+  // 复合排序逻辑
+  $: sortedTabs = [...tabs].sort((a, b) => {
+    for (const [field, direction] of Object.entries(sortConfig)) {
+      const result = compareValues(a, b, field, direction);
+      if (result !== 0) return result;
+    }
+    return 0;
   });
 
   // 搜索过滤
@@ -73,15 +105,6 @@
       )
     : sortedTabs;
 
-  function handleSort(field) {
-    if (sortBy === field) {
-      sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
-    } else {
-      sortBy = field;
-      sortDirection = 'desc';
-    }
-  }
-  
   function formatTime(timestamp) {
     const date = new Date(timestamp);
     return date.toLocaleString('zh-CN');
@@ -96,6 +119,8 @@
     await memoryService.restoreTab(tabId);
     await loadTabs();
   }
+
+
 </script>
 
 <style>
@@ -158,6 +183,19 @@
     word-wrap: break-word;
     white-space: normal;
   }
+
+  /* 优化排序箭头样式 */
+  .group:hover .text-gray-400 {
+    opacity: 1;
+  }
+  
+  th.cursor-pointer {
+    user-select: none;
+  }
+
+  th.cursor-pointer:hover {
+    background-color: rgba(0, 0, 0, 0.05);
+  }
 </style>
 
 <div class="p-4 space-y-4">
@@ -175,15 +213,6 @@
       placeholder="搜索标签页..."
       class="px-3 py-2 border rounded-lg flex-1"
     />
-    
-    <select
-      bind:value={sortBy}
-      class="px-3 py-2 border rounded-lg"
-    >
-      <option value="memory">按内存排序</option>
-      <option value="title">按标题排序</option>
-      <option value="lastAccess">按访问时间排序</option>
-    </select>
   </div>
   
   <div class="bg-white rounded-lg shadow overflow-hidden">
@@ -197,25 +226,73 @@
       </colgroup>
       <thead class="bg-gray-50">
         <tr>
-          <th class="px-4 py-2 text-left text-sm font-medium text-gray-500">
-            标签页
+          <th 
+            class="px-4 py-2 text-left text-sm font-medium text-gray-500 cursor-pointer group"
+            on:click={() => handleSort('title')}
+          >
+            <div class="flex items-center">
+              标签页
+              <span class="ml-1 text-gray-400 group-hover:text-gray-600">
+                {#if sortConfig.title === 'asc'}
+                  ↑
+                {:else if sortConfig.title === 'desc'}
+                  ↓
+                {:else}
+                  ↕
+                {/if}
+              </span>
+            </div>
           </th>
-          <th class="px-4 py-2 text-left text-sm font-medium text-gray-500">
-            域名
+          <th 
+            class="px-4 py-2 text-left text-sm font-medium text-gray-500 cursor-pointer group"
+            on:click={() => handleSort('domain')}
+          >
+            <div class="flex items-center">
+              域名
+              <span class="ml-1 text-gray-400 group-hover:text-gray-600">
+                {#if sortConfig.domain === 'asc'}
+                  ↑
+                {:else if sortConfig.domain === 'desc'}
+                  ↓
+                {:else}
+                  ↕
+                {/if}
+              </span>
+            </div>
           </th>
-          <th class="px-4 py-2 text-left text-sm font-medium text-gray-500 cursor-pointer"
-              on:click={() => handleSort('memory')}>
-            内存使用
-            {#if sortBy === 'memory'}
-              {sortDirection === 'asc' ? '↑' : '↓'}
-            {/if}
+          <th 
+            class="px-4 py-2 text-left text-sm font-medium text-gray-500 cursor-pointer group"
+            on:click={() => handleSort('memory')}
+          >
+            <div class="flex items-center">
+              内存使用
+              <span class="ml-1 text-gray-400 group-hover:text-gray-600">
+                {#if sortConfig.memory === 'asc'}
+                  ↑
+                {:else if sortConfig.memory === 'desc'}
+                  ↓
+                {:else}
+                  ↕
+                {/if}
+              </span>
+            </div>
           </th>
-          <th class="px-4 py-2 text-left text-sm font-medium text-gray-500 cursor-pointer"
-              on:click={() => handleSort('lastAccess')}>
-            最后访问
-            {#if sortBy === 'lastAccess'}
-              {sortDirection === 'asc' ? '↑' : '↓'}
-            {/if}
+          <th 
+            class="px-4 py-2 text-left text-sm font-medium text-gray-500 cursor-pointer group"
+            on:click={() => handleSort('lastAccess')}
+          >
+            <div class="flex items-center">
+              最后访问
+              <span class="ml-1 text-gray-400 group-hover:text-gray-600">
+                {#if sortConfig.lastAccess === 'asc'}
+                  ↑
+                {:else if sortConfig.lastAccess === 'desc'}
+                  ↓
+                {:else}
+                  ↕
+                {/if}
+              </span>
+            </div>
           </th>
           <th class="px-4 py-2 text-left text-sm font-medium text-gray-500">
             操作
@@ -227,16 +304,26 @@
           <tr class="hover:bg-gray-50">
             <td class="px-4 py-2 truncate" title={tab.title}>
               <div class="flex items-center space-x-2">
-                <img
-                  src={tab.favIconUrl}
-                  alt=""
-                  class="w-4 h-4"
-                  on:error={(e) => {
-                    e.target.style.display = 'none';
-                    // 可选：使用默认图标替代
-                    // e.target.src = 'path/to/default/icon.png';
-                  }}
-                />
+                <div class="w-4 h-4 flex-shrink-0">
+                  {#if tab.favIconUrl}
+                    <img
+                      src={tab.favIconUrl}
+                      alt=""
+                      class="w-full h-full object-contain"
+                      referrerpolicy="no-referrer"
+                      crossorigin="anonymous"
+                      on:error={(e) => {
+                        console.log(`图标加载失败: ${tab.favIconUrl}`);
+                        e.target.style.display = 'none';
+                        e.target.nextElementSibling.style.display = 'flex';
+                      }}
+                    />
+                  {:else}
+                    <div class="w-full h-full bg-gray-200 rounded-full flex items-center justify-center text-xs text-gray-600">
+                      {tab.title.charAt(0).toUpperCase()}
+                    </div>
+                  {/if}
+                </div>
                 <span class="truncate max-w-md" title={tab.title}>
                   {tab.title}
                 </span>
