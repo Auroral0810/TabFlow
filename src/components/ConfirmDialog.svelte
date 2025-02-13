@@ -11,8 +11,13 @@
 {#if show}
   <div class="fixed inset-0 z-50 flex items-center justify-center">
     <!-- 背景遮罩 -->
-    <div class="absolute inset-0 bg-black bg-opacity-30"
-         on:click={onCancel}></div>
+    <div 
+      class="absolute inset-0 bg-black bg-opacity-30"
+      role="button"
+      tabindex="0"
+      on:click={onCancel}
+      on:keydown={e => e.key === 'Escape' && onCancel()}
+    ></div>
     
     <!-- 对话框 -->
     <div class="relative bg-white rounded-lg w-full max-w-md mx-4 p-6">

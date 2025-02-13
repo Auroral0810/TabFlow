@@ -19,6 +19,7 @@ export default defineConfig({
     watch: process.env.NODE_ENV === 'development' ? {} : null,
     outDir: 'dist',
     sourcemap: true,
+    chunkSizeWarningLimit: 2000,
     rollupOptions: {
       input: {
         main: resolve(__dirname, 'index.html')
@@ -26,7 +27,11 @@ export default defineConfig({
       output: {
         entryFileNames: '[name].js',
         chunkFileNames: '[name].js',
-        assetFileNames: '[name][extname]'
+        assetFileNames: '[name][extname]',
+        manualChunks: {
+          firebase: ['firebase/app', 'firebase/auth', 'firebase/firestore'],
+          vendor: ['svelte']
+        }
       }
     }
   },

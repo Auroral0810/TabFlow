@@ -1,57 +1,86 @@
-import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, addDoc, getDocs, updateDoc, deleteDoc, doc } from 'firebase/firestore';
-import { getAuth, signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
+import { auth, db } from './firebase';
+import { 
+  collection, 
+  addDoc, 
+  getDocs, 
+  query, 
+  deleteDoc,
+  doc 
+} from 'firebase/firestore';
+import { 
+  GoogleAuthProvider,
+  signInWithCredential,
+  signInWithPopup
+} from 'firebase/auth';
 import { openDB } from 'idb';
-import { firebaseConfig } from './firebase-config';
 
 export class SessionService {
   constructor() {
-    this.db = null;
-    this.firebase = null;
     this.storageKey = 'tabSessions';
-    this.initializeDB();
-    this.initializeFirebase();
   }
 
-  async initializeDB() {
-    this.db = await openDB('tabflow', 1, {
-      upgrade(db) {
-        db.createObjectStore('sessions', { keyPath: 'id' });
-      }
-    });
-  }
-
-  initializeFirebase() {
-    try {
-      this.app = initializeApp(firebaseConfig);
-      this.db = getFirestore(this.app);
-      this.auth = getAuth(this.app);
-      console.log('Firebase 初始化成功');
-    } catch (error) {
-      console.error('Firebase 初始化失败:', error);
-    }
-  }
-
+  // 修改登录方法
   async signIn() {
     try {
-      const provider = new GoogleAuthProvider();
-      const result = await signInWithPopup(this.auth, provider);
-      console.log('登录成功:', result.user.email);
-      return result.user;
+      console.log('开始登录流程...');
+      if (typeof chrome !== 'undefined' && chrome.identity) {
+        console.log('检测到 Chrome 扩展环境');
+        return new Promise((resolve, reject) => {
+          // 简化 auth_params，移除 client_id
+          const auth_params = {
+            interactive: true
+          };
+
+          chrome.identity.getAuthToken(auth_params, async function(token) {
+            if (chrome.runtime.lastError) {
+              console.error('Chrome 认证错误:', chrome.runtime.lastError);
+              return reject(chrome.runtime.lastError);
+            }
+
+            try {
+              // 使用获取到的 token 创建 Firebase 凭证
+              const credential = GoogleAuthProvider.credential(null, token);
+              const result = await signInWithCredential(auth, credential);
+              console.log('Firebase 登录成功:', result.user.email);
+              resolve(result.user);
+            } catch (error) {
+              console.error('Firebase 认证错误:', error);
+              if (error.code === 'auth/invalid-credential') {
+                chrome.identity.removeCachedAuthToken({ token }, () => {
+                  console.log('已清除失效的 token');
+                });
+              }
+              reject(error);
+            }
+          });
+        });
+      } else {
+        throw new Error('此功能仅支持在 Chrome 扩展中使用');
+      }
     } catch (error) {
-      console.error('登录失败:', error);
+      console.error('登录过程发生错误:', error);
       throw error;
     }
   }
 
+  // 检查登录状态
+  isLoggedIn() {
+    return auth.currentUser !== null;
+  }
+
+  // 获取当前用户
+  getCurrentUser() {
+    return auth.currentUser;
+  }
+
+  // 同步到云端
   async syncToCloud() {
     try {
-      if (!this.auth.currentUser) {
-        throw new Error('请先登录');
-      }
+      const user = auth.currentUser;
+      if (!user) throw new Error('请先登录');
 
       const sessions = await this.getSessions();
-      const userSessionsRef = collection(this.db, `users/${this.auth.currentUser.uid}/sessions`);
+      const userSessionsRef = collection(db, `users/${user.uid}/sessions`);
 
       // 清除旧数据
       const oldDocs = await getDocs(userSessionsRef);
@@ -74,13 +103,13 @@ export class SessionService {
     }
   }
 
+  // 从云端同步
   async syncFromCloud() {
     try {
-      if (!this.auth.currentUser) {
-        throw new Error('请先登录');
-      }
+      const user = auth.currentUser;
+      if (!user) throw new Error('请先登录');
 
-      const userSessionsRef = collection(this.db, `users/${this.auth.currentUser.uid}/sessions`);
+      const userSessionsRef = collection(db, `users/${user.uid}/sessions`);
       const snapshot = await getDocs(userSessionsRef);
       
       const sessions = snapshot.docs.map(doc => ({
@@ -100,6 +129,90 @@ export class SessionService {
     }
   }
 
+  // 获取所有会话
+  async getSessions() {
+    try {
+      const result = await chrome.storage.local.get(this.storageKey);
+      return result[this.storageKey] || [];
+    } catch (error) {
+      console.error('获取会话失败:', error);
+      throw error;
+    }
+  }
+
+  // 保存会话
+  async saveSession(name, tabs) {
+    try {
+      const sessions = await this.getSessions();
+      const newSession = {
+        id: Date.now().toString(),
+        name: name,
+        timestamp: Date.now(),
+        tabs: tabs.map(tab => ({
+          url: tab.url,
+          title: tab.title || tab.url,
+          pinned: tab.pinned || false
+        }))
+      };
+
+      sessions.push(newSession);
+      await chrome.storage.local.set({
+        [this.storageKey]: sessions
+      });
+
+      // 如果用户已登录，同步到云端
+      if (auth.currentUser) {
+        await this.syncToCloud();
+      }
+
+      return newSession;
+    } catch (error) {
+      console.error('保存会话失败:', error);
+      throw error;
+    }
+  }
+
+  // 删除会话
+  async deleteSession(sessionId) {
+    try {
+      let sessions = await this.getSessions();
+      sessions = sessions.filter(session => session.id !== sessionId);
+      await chrome.storage.local.set({
+        [this.storageKey]: sessions
+      });
+    } catch (error) {
+      console.error('删除会话失败:', error);
+      throw error;
+    }
+  }
+
+  // 更新会话
+  async updateSession(sessionId, updates) {
+    try {
+      const sessions = await this.getSessions();
+      const index = sessions.findIndex(s => s.id === sessionId);
+      
+      if (index === -1) {
+        throw new Error('会话不存在');
+      }
+
+      sessions[index] = {
+        ...sessions[index],
+        ...updates,
+        timestamp: Date.now()
+      };
+
+      await chrome.storage.local.set({
+        [this.storageKey]: sessions
+      });
+
+      return sessions[index];
+    } catch (error) {
+      console.error('更新会话失败:', error);
+      throw error;
+    }
+  }
+
   // 处理 URL，确保是完整的 URL
   processUrl(url) {
     try {
@@ -115,59 +228,6 @@ export class SessionService {
     } catch (error) {
       console.error('处理 URL 失败:', error);
       return url;
-    }
-  }
-
-  async saveSession(name, tabs) {
-    try {
-      const sessions = await this.getSessions();
-      
-      console.log('准备保存的会话信息：');
-      console.log('会话名称:', name);
-      console.log('标签页数量:', tabs.length);
-      
-      const processedTabs = tabs.map((tab, index) => {
-        const processedUrl = this.processUrl(tab.url);
-        console.log(`标签页 ${index + 1}:`, {
-          url: processedUrl,
-          title: tab.title,
-          pinned: tab.pinned
-        });
-        
-        return {
-          url: processedUrl,
-          title: tab.title || processedUrl,
-          pinned: tab.pinned || false
-        };
-      });
-
-      const newSession = {
-        id: Date.now().toString(),
-        name: name,
-        timestamp: Date.now(),
-        tabs: processedTabs
-      };
-
-      sessions.push(newSession);
-      await chrome.storage.local.set({
-        [this.storageKey]: sessions
-      });
-
-      console.log('会话保存成功：', newSession);
-      return newSession;
-    } catch (error) {
-      console.error('保存会话失败:', error);
-      throw error;
-    }
-  }
-
-  async getSessions() {
-    try {
-      const result = await chrome.storage.local.get(this.storageKey);
-      return result[this.storageKey] || [];
-    } catch (error) {
-      console.error('获取会话失败:', error);
-      return [];
     }
   }
 
@@ -210,54 +270,6 @@ export class SessionService {
       return true;
     } catch (error) {
       console.error('恢复会话失败:', error);
-      throw error;
-    }
-  }
-
-  async deleteSession(sessionId) {
-    try {
-      let sessions = await this.getSessions();
-      sessions = sessions.filter(s => s.id !== sessionId);
-      await chrome.storage.local.set({
-        [this.storageKey]: sessions
-      });
-    } catch (error) {
-      console.error('删除会话失败:', error);
-      throw error;
-    }
-  }
-
-  async updateSession(sessionId, updates) {
-    try {
-      let sessions = await this.getSessions();
-      const index = sessions.findIndex(s => s.id === sessionId);
-      
-      if (index === -1) {
-        throw new Error('会话不存在');
-      }
-
-      // 如果更新包含标签页，处理每个标签页的 URL
-      if (updates.tabs) {
-        updates.tabs = updates.tabs.map(tab => ({
-          ...tab,
-          url: this.processUrl(tab.url),
-          title: tab.title || tab.url
-        }));
-      }
-
-      sessions[index] = {
-        ...sessions[index],
-        ...updates,
-        timestamp: Date.now()
-      };
-
-      await chrome.storage.local.set({
-        [this.storageKey]: sessions
-      });
-
-      return sessions[index];
-    } catch (error) {
-      console.error('更新会话失败:', error);
       throw error;
     }
   }

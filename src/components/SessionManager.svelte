@@ -3,6 +3,7 @@
   import { SessionService } from '../utils/SessionService';
   import ConfirmDialog from './ConfirmDialog.svelte';
   import AlertDialog from './AlertDialog.svelte';
+  import CreateSessionDialog from './CreateSessionDialog.svelte';
   
   let sessionService = new SessionService();
   let sessions = [];
@@ -14,6 +15,8 @@
   let editingTab = null;
   let newTabUrl = '';
   let newTabTitle = '';
+  let isLoggedIn = false;
+  let showCreateDialog = false;
   
   // 确认对话框状态
   let confirmDialog = {
@@ -152,22 +155,31 @@
   }
 
   // 保存会话
-  function handleSaveSession() {
-    if (!sessionName.trim()) {
-      showAlert('保存会话:', '请输入会话名称');
-      return;
-    }
-
-    showConfirm({
-      title: '保存会话',
-      message: '确定要保存当前的所有标签页吗？',
-      confirmText: '保存',
-      confirmButtonClass: 'bg-green-500 hover:bg-green-600',
-      onConfirm: async () => {
-        await saveCurrentSession();
-        confirmDialog.show = false;
+  async function handleSaveSession(event) {
+    const { id, name, tabs } = event.detail;
+    try {
+      if (id) {
+        // 更新现有会话
+        await sessionService.updateSession(id, { name, tabs });
+      } else {
+        // 创建新会话
+        await sessionService.saveSession(name, tabs);
       }
-    });
+      
+      sessions = await sessionService.getSessions();
+      showAlert('成功', id ? '会话已更新' : '新会话已创建');
+      
+      // 清除草稿
+      localStorage.removeItem('session_draft');
+    } catch (error) {
+      console.error('保存会话失败:', error);
+      showAlert('失败', error.message);
+    }
+  }
+
+  function handleEditSession(session) {
+    editingSession = session;
+    showCreateDialog = true;
   }
 
   // 添加新标签页
@@ -288,10 +300,55 @@
     }
     return true;
   }
+
+  async function handleSync() {
+    try {
+      if (!isLoggedIn) {
+        await sessionService.signIn();
+        isLoggedIn = true;
+      }
+      await sessionService.syncToCloud();
+      showAlert('同步成功', '数据已成功同步到云端');
+    } catch (error) {
+      console.error('同步失败:', error);
+      showAlert('同步失败', error.message);
+    }
+  }
+
+  async function handleCreateSession(event) {
+    const { name, tabs } = event.detail;
+    try {
+      await sessionService.saveSession(name, tabs);
+      sessions = await sessionService.getSessions();
+      showAlert('创建成功', '新会话已创建');
+    } catch (error) {
+      console.error('创建会话失败:', error);
+      showAlert('创建失败', error.message);
+    }
+  }
 </script>
 
 <div class="h-full flex flex-col">
-  <h2 class="text-xl font-medium text-gray-700 mb-4">会话管理</h2>
+  <div class="flex justify-between items-center mb-4">
+    <h2 class="text-xl font-bold">会话管理</h2>
+    <div class="flex space-x-2">
+      <button
+        on:click={() => {
+          editingSession = null;
+          showCreateDialog = true;
+        }}
+        class="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600"
+      >
+        新建会话
+      </button>
+      <button
+        on:click={handleSync}
+        class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+      >
+        {isLoggedIn ? '同步' : '登录并同步'}
+      </button>
+    </div>
+  </div>
   <div class="bg-white rounded-lg shadow-sm p-4 flex-1 overflow-auto">
     <div class="p-4">
       <div class="mb-4 flex items-center">
@@ -302,7 +359,10 @@
           class="px-3 py-2 border rounded-lg mr-2 flex-1"
         />
         <button
-          on:click={handleSaveSession}
+          on:click={() => {
+            editingSession = null;
+            showCreateDialog = true;
+          }}
           class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600"
         >
           保存当前会话
@@ -338,7 +398,7 @@
                   {session.name}
                   <button
                     class="ml-2 text-gray-400 hover:text-gray-600"
-                    on:click={() => editingSession = session.id}
+                    on:click={() => handleEditSession(session)}
                     title="编辑名称"
                   >
                     ✎
@@ -461,6 +521,12 @@
       </div>
     </div>
   </div>
+
+  <CreateSessionDialog
+    bind:show={showCreateDialog}
+    bind:editingSession
+    on:save={handleSaveSession}
+  />
 </div>
 
 <!-- 添加警告对话框组件 -->

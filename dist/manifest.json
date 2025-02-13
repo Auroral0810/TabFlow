@@ -1,15 +1,35 @@
 {
   "manifest_version": 3,
   "name": "TabFlow",
-  "version": "1.0.0",
+  "version": "1.0",
   "description": "智能标签页管理工具",
   "permissions": [
+    "debugger",
     "tabs",
     "storage",
-    "scripting"
+    "scripting",
+    "favicon",
+    "activeTab",
+    "identity",
+    "identity.email"
   ],
+  "oauth2": {
+    "client_id": "758427076258-oh6lhgp3fv63vi814gm9p43b89ubm6gh.apps.googleusercontent.com",
+    "scopes": [
+      "https://www.googleapis.com/auth/userinfo.email",
+      "https://www.googleapis.com/auth/userinfo.profile",
+      "openid"
+    ]
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' https://*.firebaseio.com https://*.firebaseapp.com https://*.googleapis.com"
+  },
   "host_permissions": [
-    "<all_urls>"
+    "<all_urls>",
+    "https://apis.google.com/",
+    "https://*.firebaseio.com/",
+    "https://*.firebaseapp.com/",
+    "https://*.googleapis.com/"
   ],
   "action": {
     "default_popup": "index.html",
@@ -28,23 +48,13 @@
     "48": "assets/icon48.png",
     "128": "assets/icon128.png"
   },
-  "oauth2": {
-    "client_id": "your-client-id",
-    "scopes": [
-      "https://www.googleapis.com/auth/userinfo.email"
-    ]
-  },
-  "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'"
-  },
   "web_accessible_resources": [
     {
       "matches": [
         "<all_urls>"
       ],
       "resources": [
-        "hibernate.html",
-        "hibernate.js"
+        "icons/*"
       ],
       "use_dynamic_url": false
     }
@@ -54,5 +64,9 @@
   },
   "cross_origin_opener_policy": {
     "value": "same-origin"
-  }
+  },
+  "cross_origin_resource_policy": {
+    "value": "cross-origin"
+  },
+  "key": "pfgdalakkmhkhjlnpfhocececpmacgbg"
 }

@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import { MemoryService } from '../utils/MemoryService';
+  import { ToastNotification } from "carbon-components-svelte";
   
   let memoryService = new MemoryService();
   let tabs = [];
@@ -15,43 +16,59 @@
     lastAccess: null
   };
   
-  async function loadTabs() {
-    console.log('Loading tabs...');
-    const chromeTabs = await chrome.tabs.query({});
-    console.log(`Found ${chromeTabs.length} tabs`);
-    
-    tabs = await Promise.all(chromeTabs.map(async (tab) => {
-      console.log(`Processing tab ${tab.id}: ${tab.title}`);
-      await memoryService.updateTabMemoryInfo(tab.id);
-      const memoryInfo = memoryService.getTabMemoryStats(tab.id);
-      console.log('memoryInfo:', memoryInfo);
-      const isHibernated = memoryService.isTabHibernated(tab.id);
-      const tabInfo = {
-        ...tab,
-        memoryInfo,
-        isHibernated,
-        domain: new URL(tab.url).hostname,
-        memoryMB: memoryInfo.totalJS,
-        lastAccess: tab.lastAccessed
-      };
+  let showToast = false;
+  
+  async function loadTabs(showNotification = false) {
+    try {
+      console.log('Loading tabs...');
+      // 获取当前窗口
+      const currentWindow = await chrome.windows.getCurrent();
+      // 只查询当前窗口的标签页
+      const chromeTabs = await chrome.tabs.query({ windowId: currentWindow.id });
+      console.log(`Found ${chromeTabs.length} tabs in current window`);
       
-      console.log('Tab info:', {
-        id: tab.id,
-        title: tab.title,
-        memory: `${tabInfo.memoryMB}MB`,
-        lastAccess: new Date(tabInfo.lastAccess).toLocaleString()
-      });
-      return tabInfo;
-    }));
-    
-    totalMemoryUsage = tabs.reduce((sum, tab) => sum + (tab.memoryMB || 0), 0);
-    // console.log(`Total memory usage: ${totalMemoryUsage.toFixed(2)}MB`);
+      tabs = await Promise.all(chromeTabs.map(async (tab) => {
+        console.log(`Processing tab ${tab.id}: ${tab.title}`);
+        await memoryService.updateTabMemoryInfo(tab.id);
+        const memoryInfo = memoryService.getTabMemoryStats(tab.id);
+        console.log('memoryInfo:', memoryInfo);
+        const isHibernated = memoryService.isTabHibernated(tab.id);
+        const tabInfo = {
+          ...tab,
+          memoryInfo,
+          isHibernated,
+          domain: new URL(tab.url).hostname,
+          memoryMB: memoryInfo.totalJS,
+          lastAccess: tab.lastAccessed
+        };
+        
+        console.log('Tab info:', {
+          id: tab.id,
+          title: tab.title,
+          memory: `${tabInfo.memoryMB}MB`,
+          lastAccess: new Date(tabInfo.lastAccess).toLocaleString()
+        });
+        return tabInfo;
+      }));
+      
+      totalMemoryUsage = tabs.reduce((sum, tab) => sum + (tab.memoryMB || 0), 0);
+      
+      // 只在手动刷新时显示提示
+      if (showNotification) {
+        showToast = true;
+        setTimeout(() => {
+          showToast = false;
+        }, 3000);
+      }
+    } catch (error) {
+      console.error('Failed to load tabs:', error);
+    }
   }
   
   onMount(async () => {
     console.log('MemoryMonitorPage mounted');
-    await loadTabs();
-    const interval = setInterval(loadTabs, 30000);
+    await loadTabs(false); // 初始加载不显示提示
+    const interval = setInterval(() => loadTabs(false), 30000); // 自动刷新不显示提示
     return () => clearInterval(interval);
   });
 
@@ -120,8 +137,23 @@
     await loadTabs();
   }
 
+  // 手动刷新函数
+  async function handleRefresh() {
+    await loadTabs(true); // 手动刷新显示提示
+  }
 
 </script>
+
+{#if showToast}
+  <div class="fixed top-4 left-1/2 transform -translate-x-1/2 z-50">
+    <div class="bg-green-50 text-green-800 px-4 py-3 rounded-lg shadow-lg flex items-center space-x-2 border border-green-200">
+      <svg class="w-5 h-5 text-green-400" fill="currentColor" viewBox="0 0 20 20">
+        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+      </svg>
+      <span class="font-medium">数据已刷新</span>
+    </div>
+  </div>
+{/if}
 
 <style>
   .memory-table {
@@ -201,8 +233,19 @@
 <div class="p-4 space-y-4">
   <div class="flex justify-between items-center">
     <h2 class="text-xl font-medium">内存监控</h2>
-    <div class="text-gray-600">
-      总内存使用: {totalMemoryUsage.toFixed(2)} MB
+    <div class="flex items-center space-x-4">
+      <button
+        on:click={handleRefresh}
+        class="px-3 py-1 bg-blue-500 text-white rounded-lg hover:bg-blue-600 flex items-center space-x-1"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+        </svg>
+        <span>刷新</span>
+      </button>
+      <div class="text-gray-600">
+        总内存使用: {totalMemoryUsage.toFixed(2)} MB
+      </div>
     </div>
   </div>
   

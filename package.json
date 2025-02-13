@@ -24,6 +24,7 @@
   },
   "dependencies": {
     "@tensorflow/tfjs": "^4.22.0",
+    "carbon-components-svelte": "^0.87.5",
     "firebase": "^10.14.1"
   }
 }
