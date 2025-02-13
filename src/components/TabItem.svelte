@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { CategoryService } from '../utils/CategoryService';
   import { StorageService } from '../utils/StorageService';
+  import MemoryStats from './MemoryStats.svelte';
   
   /** @type {chrome.tabs.Tab} */
   export let tab;
@@ -13,16 +14,22 @@
   export let onAddNote = () => {};
   export let onTogglePin;
   
-  let categoryService;
+  let categoryService = new CategoryService();
   let currentCategory = '未分类';
   let showCategorySelect = false;
   let isBookmarked = false;
   let bookmarkId = null;
   let isMuted = false;
   let isHovered = false;
+  let predictedCategory = '其他';
   
   onMount(() => {
     isMuted = tab.mutedInfo?.muted || false;
+  });
+
+  onMount(async () => {
+    await categoryService.initialize();
+    predictedCategory = await categoryService.predictCategory(tab);
   });
 
   async function checkBookmarkStatus() {
@@ -130,6 +137,11 @@
       console.error('切换固定状态失败:', error);
     }
   }
+
+  async function updateCategory(newCategory) {
+    predictedCategory = newCategory;
+    await categoryService.trainOnUserFeedback(tab, newCategory);
+  }
 </script>
 
 <div 
@@ -172,9 +184,7 @@
 
   <div class="flex items-center gap-1 ml-2">
     {#if showMemory}
-      <span class="text-xs text-gray-500">
-        内存占用统计中...
-      </span>
+      <MemoryStats tabId={tab.id} />
     {/if}
     
     {#if showNotes}
@@ -211,6 +221,18 @@
       ✕
     </button>
   </div>
+
+  {#if showCategorySelect}
+    <select
+      bind:value={predictedCategory}
+      on:change={(e) => updateCategory(e.target.value)}
+      class="ml-2 text-sm border rounded"
+    >
+      {#each categoryService.categories as category}
+        <option value={category}>{category}</option>
+      {/each}
+    </select>
+  {/if}
 </div>
 
 <style>

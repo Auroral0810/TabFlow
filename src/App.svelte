@@ -7,6 +7,8 @@
   import Settings from './components/Settings.svelte';
   import { TabGroupService } from './utils/TabGroupService';
   import { defaultIcon } from './assets/icons';
+  import { MemoryService } from './utils/MemoryService';
+  import MemoryMonitorPage from './components/MemoryMonitorPage.svelte';
   
   let activeTab = 'tabs';
   let searchQuery = '';
@@ -18,6 +20,7 @@
   let filteredTabs = [];
   
   const tabGroupService = new TabGroupService(defaultIcon);
+  const memoryService = new MemoryService();
 
   onMount(async () => {
     try {
@@ -25,6 +28,20 @@
       filteredTabs = tabs;
       tabs.forEach(tab => {
         tabGroupService.updateAccessTime(tab.id);
+      });
+      
+      // 初始化内存监控
+      chrome.tabs.query({ currentWindow: true }, async (tabs) => {
+        tabs.forEach(tab => {
+          memoryService.updateTabMemoryInfo(tab.id);
+        });
+      });
+      
+      // 监听内存警告
+      chrome.runtime.onMessage.addListener((message) => {
+        if (message.type === 'memoryWarning') {
+          showMemoryWarning = true;
+        }
       });
     } catch (error) {
       console.error('加载标签页时出错:', error);
@@ -200,6 +217,12 @@
           会话管理
         </button>
         <button
+          class="px-4 py-2 rounded-lg transition-colors duration-200 {activeTab === 'memory' ? 'bg-blue-500 text-white' : 'hover:bg-gray-100'}"
+          on:click={() => activeTab = 'memory'}
+        >
+          内存监控
+        </button>
+        <button
           class="px-4 py-2 rounded-lg transition-colors duration-200 {activeTab === 'settings' ? 'bg-blue-500 text-white' : 'hover:bg-gray-100'}"
           on:click={() => activeTab = 'settings'}
         >
@@ -289,6 +312,8 @@
 
     {:else if activeTab === 'sessions'}
       <SessionManager />
+    {:else if activeTab === 'memory'}
+      <MemoryMonitorPage />
     {:else if activeTab === 'settings'}
       <Settings />
     {/if}

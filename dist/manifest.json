@@ -6,7 +6,7 @@
   "permissions": [
     "tabs",
     "storage",
-    "unlimitedStorage"
+    "scripting"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -36,5 +36,23 @@
   },
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'"
+  },
+  "web_accessible_resources": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "resources": [
+        "hibernate.html",
+        "hibernate.js"
+      ],
+      "use_dynamic_url": false
+    }
+  ],
+  "cross_origin_embedder_policy": {
+    "value": "require-corp"
+  },
+  "cross_origin_opener_policy": {
+    "value": "same-origin"
   }
 }
