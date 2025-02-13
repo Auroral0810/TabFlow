@@ -18,7 +18,7 @@
   }
   
   function updateMemorySettings() {
-    memoryService.setMemoryThreshold(memoryThreshold);
+    memoryService.setMemoryThreshold(memoryThresholgitd);
     memoryService.setAutoHibernate(autoHibernateEnabled);
   }
 </script>

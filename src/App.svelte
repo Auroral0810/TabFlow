@@ -9,6 +9,7 @@
   import { defaultIcon } from './assets/icons';
   import { MemoryService } from './utils/MemoryService';
   import MemoryMonitorPage from './components/MemoryMonitorPage.svelte';
+  import QuickTabSwitcher from './components/QuickTabSwitcher.svelte';
   
   let activeTab = 'tabs';
   let searchQuery = '';
@@ -330,6 +331,8 @@
     {/if}
   </main>
 </div>
+
+<QuickTabSwitcher />
 
 <style>
   :global(body) {
