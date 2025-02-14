@@ -10,6 +10,7 @@
   import { MemoryService } from './utils/MemoryService';
   import MemoryMonitorPage from './components/MemoryMonitorPage.svelte';
   import QuickTabSwitcher from './components/QuickTabSwitcher.svelte';
+  import { CategoryService } from './utils/CategoryService';
   
   let activeTab = 'tabs';
   let searchQuery = '';
@@ -19,14 +20,40 @@
   let groups = [];
   let showMemoryWarning = false;
   let filteredTabs = [];
+  let showMemory = false;
+  
+  // 存储标签页的分类信息
+  let tabCategories = new Map();
   
   const tabGroupService = new TabGroupService(defaultIcon);
   const memoryService = new MemoryService();
+  const categoryService = new CategoryService();
 
   onMount(async () => {
     try {
+      await categoryService.initialize();
+      
+      // 获取所有标签页
       tabs = await chrome.tabs.query({ currentWindow: true });
+      
+      console.log('开始为标签页预测分类...');
+      
+      // 为每个标签页预测分类并存储
+      for (const tab of tabs) {
+        if (!tabCategories.has(tab.id)) {
+          const category = await categoryService.predictCategory(tab);
+          tabCategories.set(tab.id, category);
+          tab.predictedCategory = category;
+          console.log(`标签页预测结果 - 标题: "${tab.title}" => 分类: ${category}`);
+        } else {
+          tab.predictedCategory = tabCategories.get(tab.id);
+          console.log(`使用已存储的分类 - 标题: "${tab.title}" => 分类: ${tab.predictedCategory}`);
+        }
+      }
+      
       filteredTabs = tabs;
+      
+      // 更新访问时间
       tabs.forEach(tab => {
         tabGroupService.updateAccessTime(tab.id);
       });
@@ -49,63 +76,139 @@
     }
   });
 
-  $: groups = (() => {
-    const tabsToGroup = searchQuery ? filteredTabs : tabs;
+  // 监听标签页关闭事件
+  chrome.tabs.onRemoved.addListener((tabId) => {
+    console.log(`标签页被关闭: ${tabId}`);
+    // 从列表和分类存储中移除该标签页
+    tabs = tabs.filter(tab => tab.id !== tabId);
+    tabCategories.delete(tabId);
+    filteredTabs = filteredTabs.filter(tab => tab.id !== tabId);
+  });
+
+  // 处理关闭标签页组
+  async function closeGroup(group) {
+    console.log(`关闭分组: ${group.title}`);
+    const tabIds = group.tabs.map(tab => tab.id);
     
-    // 首先分离固定标签页
-    const pinnedTabs = tabsToGroup.filter(tab => tab.pinned);
-    const unpinnedTabs = tabsToGroup.filter(tab => !tab.pinned);
+    // 在关闭标签页之前保存它们的分类
+    for (const tab of group.tabs) {
+      console.log(`保存标签页分类 - 标题: "${tab.title}" => 分类: ${tab.predictedCategory}`);
+      tabCategories.set(tab.id, tab.predictedCategory);
+    }
+    
+    // 关闭标签页
+    await Promise.all(tabIds.map(id => chrome.tabs.remove(id)));
+    
+    // 更新标签页列表，保持其他标签页的分类不变
+    tabs = tabs.filter(tab => !tabIds.includes(tab.id));
+    tabs = tabs.map(tab => ({
+      ...tab,
+      predictedCategory: tabCategories.get(tab.id) || tab.predictedCategory || '其他'
+    }));
+    
+    console.log('关闭分组后的标签页分类:', tabs.map(tab => ({
+      title: tab.title,
+      category: tab.predictedCategory
+    })));
+    
+    filteredTabs = tabs;
+  }
+
+  // 处理分类变更
+  function handleCategoryChange(tab, newCategory) {
+    console.log(`分类变更 - 标题: "${tab.title}" 从 ${tab.predictedCategory} 改为 ${newCategory}`);
+    const tabIndex = tabs.findIndex(t => t.id === tab.id);
+    if (tabIndex !== -1) {
+      tabCategories.set(tab.id, newCategory);
+      tabs[tabIndex].predictedCategory = newCategory;
+      tabs = [...tabs];
+    }
+  }
+
+  async function togglePin(tab) {
+    try {
+      console.log(`切换标签页固定状态: ${tab.title}`);
+      await chrome.tabs.update(tab.id, { pinned: !tab.pinned });
+      
+      // 只更新这个标签页的固定状态，不重新排序
+      const tabIndex = tabs.findIndex(t => t.id === tab.id);
+      if (tabIndex !== -1) {
+        tabs[tabIndex].pinned = !tab.pinned;
+        // 使用展开运算符创建新数组以触发响应式更新，但保持顺序不变
+        tabs = [...tabs];
+      }
+    } catch (error) {
+      console.error('切换固定状态失败:', error);
+    }
+  }
+
+  $: groups = (() => {
+    console.log('重新计算分组, 当前模式:', groupMode);
+    const tabsToGroup = searchQuery ? filteredTabs : tabs;
     
     let groupedTabs = [];
     
-    // 如果有固定标签页，添加固定标签页组
-    if (pinnedTabs.length > 0) {
-      groupedTabs.push({
-        title: '固定标签页',
-        tabs: pinnedTabs
-      });
-    }
-    
-    // 根据选择的分组模式处理未固定的标签页
-    switch (groupMode) {
-      case 'domain':
-        const domainGroups = tabGroupService.groupByDomain(unpinnedTabs);
-        groupedTabs = [...groupedTabs, ...domainGroups];
-        break;
-      case 'time':
-        const timeGroups = tabGroupService.groupByLastAccess(unpinnedTabs);
-        groupedTabs = [...groupedTabs, ...timeGroups];
-        break;
-      case 'category':  // 新的分组模式
-        // 按分类对标签页进行分组
-        const categoryGroups = {};
-        for (const tab of unpinnedTabs) {
-          const category = tab.category || '未分类';  // 使用已有的分类信息
-          if (!categoryGroups[category]) {
-            categoryGroups[category] = [];
-          }
-          categoryGroups[category].push(tab);
-        }
-        
-        // 转换为数组格式
-        for (const [category, tabs] of Object.entries(categoryGroups)) {
-          groupedTabs.push({
-            title: category,
-            tabs: tabs
+    // 只在不分组模式下显示固定标签页分组
+    if (groupMode === 'none') {
+      const pinnedTabs = tabsToGroup.filter(tab => tab.pinned);
+      if (pinnedTabs.length > 0) {
+        groupedTabs.push({
+          title: '固定标签页',
+          tabs: pinnedTabs
+        });
+      }
+      
+      const unpinnedTabs = tabsToGroup.filter(tab => !tab.pinned);
+      if (unpinnedTabs.length > 0) {
+        groupedTabs.push({
+          title: '未固定标签页',
+          tabs: unpinnedTabs
+        });
+      }
+    } else {
+      // 其他分组模式下，保持原有顺序
+      switch (groupMode) {
+        case 'category':
+          const categoryGroups = new Map();
+          
+          // 按照原有顺序遍历标签页
+          tabsToGroup.forEach(tab => {
+            const category = tab.predictedCategory || '其他';
+            if (!categoryGroups.has(category)) {
+              categoryGroups.set(category, {
+                title: category,
+                tabs: []
+              });
+            }
+            categoryGroups.get(category).tabs.push(tab);
           });
-        }
-        break;
-      default:
-        if (unpinnedTabs.length > 0) {
-          groupedTabs.push({
-            title: '未固定标签页',
-            tabs: unpinnedTabs
-          });
-        }
+          
+          groupedTabs = Array.from(categoryGroups.values());
+          break;
+          
+        case 'domain':
+          groupedTabs = tabGroupService.groupByDomain(tabsToGroup);
+          break;
+          
+        case 'time':
+          groupedTabs = tabGroupService.groupByLastAccess(tabsToGroup);
+          break;
+      }
     }
     
     return groupedTabs;
   })();
+
+  // 处理标签页关闭
+  async function closeTab(tabId) {
+    console.log(`关闭标签页: ${tabId}`);
+    try {
+      await chrome.tabs.remove(tabId);
+      // 实际的移除会通过 onRemoved 事件监听器处理
+    } catch (error) {
+      console.error('关闭标签页失败:', error);
+    }
+  }
 
   async function closeTabs(option, params = {}) {
     try {
@@ -198,17 +301,6 @@
         tab.title.toLowerCase().includes(query) || 
         tab.url.toLowerCase().includes(query)
       );
-    }
-  }
-
-  // 固定标签页
-  async function togglePin(tabId, pinned) {
-    try {
-      await chrome.tabs.update(tabId, { pinned: !pinned });
-      // 更新本地标签页状态
-      tabs = await chrome.tabs.query({ currentWindow: true });
-    } catch (error) {
-      console.error('固定标签页失败:', error);
     }
   }
 
@@ -308,7 +400,7 @@
                 <div class="flex items-center gap-2">
                   <button
                     class="px-3 py-1.5 bg-red-100 text-red-600 rounded-lg hover:bg-red-200 transition-colors duration-200 flex items-center gap-1.5 text-sm font-medium"
-                    on:click={() => closeTabs('byGroup', { tabs: group.tabs })}
+                    on:click={() => closeGroup(group)}
                   >
                     关闭此组
                   </button>
@@ -316,11 +408,15 @@
               {/if}
             </div>
             <div class="divide-y divide-gray-100">
-              {#each group.tabs as tab}
-                <TabItem 
-                  {tab} 
-                  defaultIcon={tabGroupService.defaultIcon}
-                  onTogglePin={() => togglePin(tab.id, tab.pinned)}
+              {#each group.tabs as tab (tab.id)}
+                <TabItem
+                  {tab}
+                  onCategoryChange={handleCategoryChange}
+                  {defaultIcon}
+                  onActivate={() => activateTab(tab.id)}
+                  {showMemory}
+                  onTogglePin={() => togglePin(tab)}
+                  onClose={() => closeTab(tab.id)}
                 />
               {/each}
             </div>

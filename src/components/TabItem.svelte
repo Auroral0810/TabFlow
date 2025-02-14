@@ -14,6 +14,7 @@
   export let showNotes = false;
   export let onAddNote = () => {};
   export let onTogglePin;
+  export let onClose = () => {};
   
   let categoryService = new CategoryService();
   let memoryService = new MemoryService();
@@ -29,7 +30,18 @@
   let isHibernated = false;
   let isLoadingCategory = true;
   
+  // 使用响应式声明来保持显示的分类与 tab.predictedCategory 同步
+  $: predictedCategory = tab.predictedCategory || '其他';
+
+  // 固定标签页的图标样式
+  $: pinButtonClass = tab.pinned 
+    ? "p-1 hover:bg-gray-200 rounded text-blue-500 bg-blue-50" 
+    : "p-1 hover:bg-gray-200 rounded text-gray-500";
+
   onMount(async () => {
+    console.log('TabItem mounted for tab:', tab.title);
+    console.log('Current predicted category:', tab.predictedCategory);
+    isLoadingCategory = false;
     isMuted = tab.mutedInfo?.muted || false;
     await memoryService.loadHibernatedState();
     isHibernated = memoryService.isTabHibernated(tab.id);
@@ -42,17 +54,13 @@
       const initialized = await categoryService.initialize();
       console.log('Category service initialization result:', initialized);
       
-      if (!initialized) {
-        console.warn('分类服务初始化失败，使用降级方案');
-      }
-      
-      console.log('Predicting category for tab:', tab);
-      predictedCategory = await categoryService.predictCategory(tab);
-      console.log('Predicted category:', predictedCategory);
+      // 直接使用标签页上已有的预测分类
+      predictedCategory = tab.predictedCategory;
+      console.log('Using category:', predictedCategory);
       
     } catch (error) {
-      console.error('分类失败:', error);
-      predictedCategory = '其他';
+      console.error('分类加载失败:', error);
+      predictedCategory = tab.predictedCategory || '其他';
     } finally {
       isLoadingCategory = false;
     }
@@ -136,10 +144,17 @@
     }
   }
 
+  // 更新分类的函数
   async function updateCategory(newCategory) {
-    console.log('Updating category to:', newCategory);
-    predictedCategory = newCategory;
-    await categoryService.trainOnUserFeedback(tab, newCategory);
+    try {
+      console.log(`Updating category for tab "${tab.title}" from ${tab.predictedCategory} to ${newCategory}`);
+      tab.predictedCategory = newCategory;
+      if (onCategoryChange) {
+        onCategoryChange(tab, newCategory);
+      }
+    } catch (error) {
+      console.error('更新分类失败:', error);
+    }
   }
 
   async function updateFavicon() {
@@ -271,7 +286,12 @@
           {#if isLoadingCategory}
             <span class="text-xs text-gray-500">分类中...</span>
           {:else}
-            <span class="category-tag category-{predictedCategory}">
+            <span 
+              class="category-tag category-{predictedCategory}"
+              on:click|stopPropagation={() => showCategorySelect = !showCategorySelect}
+              role="button"
+              tabindex="0"
+            >
               {predictedCategory}
             </span>
           {/if}
@@ -295,11 +315,22 @@
     </button>
 
     <button
-      class="p-1 hover:bg-gray-200 rounded {tab.pinned ? 'text-blue-500' : ''}"
-      on:click|stopPropagation={togglePin}
+      class={pinButtonClass}
+      on:click|stopPropagation={() => onTogglePin()}
       title={tab.pinned ? "取消固定" : "固定标签页"}
     >
-      📌
+      {#if tab.pinned}
+        <!-- 固定状态的图标 -->
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+          <path d="M5 5a2 2 0 012-2h6a2 2 0 012 2v2.17a2 2 0 01-.586 1.414l-3.828 3.829a2 2 0 01-2.828 0L5.586 8.585A2 2 0 015 7.171V5z"/>
+          <path d="M10 10v6a2 2 0 01-2 2H8a2 2 0 01-2-2v-6h4z"/>
+        </svg>
+      {:else}
+        <!-- 未固定状态的图标 -->
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v2a2 2 0 01-2 2H7a2 2 0 01-2-2V5zM9 9h6v10a2 2 0 01-2 2h-2a2 2 0 01-2-2V9z"/>
+        </svg>
+      {/if}
     </button>
 
     <button
@@ -312,7 +343,7 @@
 
     <button
       class="p-1 hover:bg-gray-200 rounded text-red-500"
-      on:click|stopPropagation={closeTab}
+      on:click|stopPropagation={() => onClose()}
       title="关闭标签页"
     >
       ✕
@@ -353,4 +384,14 @@
   .category-新闻 { @apply bg-gray-100 text-gray-800; }
   .category-开发 { @apply bg-indigo-100 text-indigo-800; }
   .category-其他 { @apply bg-gray-100 text-gray-600; }
+
+  /* 可以添加一些过渡效果 */
+  button {
+    transition: all 0.2s ease-in-out;
+  }
+  
+  /* 固定状态下的悬停效果 */
+  :global(.bg-blue-50:hover) {
+    background-color: rgba(59, 130, 246, 0.2);
+  }
 </style>  
