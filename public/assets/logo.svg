@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="320" height="100" viewBox="0 0 320 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- 高级蓝色渐变 -->
+    <linearGradient id="premium-blue" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#2563EB"/>
+      <stop offset="50%" style="stop-color:#3B82F6"/>
+      <stop offset="100%" style="stop-color:#60A5FA"/>
+    </linearGradient>
+    
+    <!-- 精致光晕 -->
+    <filter id="premium-glow" x="-10%" y="-10%" width="120%" height="120%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="1.5"/>
+      <feComposite in2="SourceGraphic" operator="over"/>
+    </filter>
+  </defs>
+
+  <!-- TabFlow 文字组 -->
+  <g transform="translate(160, 50)">
+    <!-- Tab -->
+    <text
+      x="-130"
+      y="0"
+      font-family="SF Pro Display, -apple-system, BlinkMacSystemFont"
+      font-size="56"
+      font-weight="800"
+      letter-spacing="0"
+      fill="url(#premium-blue)"
+      filter="url(#premium-glow)"
+    >Tab</text>
+    
+    <!-- Flow -->
+    <text
+      x="-20"
+      y="0"
+      font-family="SF Pro Display, -apple-system, BlinkMacSystemFont"
+      font-size="56"
+      font-weight="300"
+      letter-spacing="0"
+      fill="url(#premium-blue)"
+      filter="url(#premium-glow)"
+    >Flow</text>
+
+    <!-- 精致装饰线 -->
+    <path
+      d="M-110 10 L80 10"
+      stroke="url(#premium-blue)"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      opacity="0.6"
+    />
+  </g>
+</svg>

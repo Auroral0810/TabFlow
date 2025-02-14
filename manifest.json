@@ -11,7 +11,9 @@
     "favicon",
     "activeTab",
     "identity",
-    "identity.email"
+    "identity.email",
+    "windows",
+    "commands"
   ],
   "oauth2": {
     "client_id": "758427076258-oh6lhqp3fv63vi814gm9p43b89ubm6gh.apps.googleusercontent.com",
@@ -52,6 +54,8 @@
   },
   "web_accessible_resources": [{
     "resources": ["icons/*"],
+    "matches": ["<all_urls>"],
+    "resources": ["model/*"],
     "matches": ["<all_urls>"]
   }],
   "cross_origin_embedder_policy": {
@@ -63,5 +67,14 @@
   "cross_origin_resource_policy": {
     "value": "cross-origin"
   },
-  "key": "pfgdalakkmhkhjlnpfhocececpmacgbg"
+  "key": "pfgdalakkmhkhjlnpfhocececpmacgbg",
+  "commands": {
+    "toggle-quick-switcher": {
+      "suggested_key": {
+        "default": "Ctrl+K",
+        "mac": "Command+K"
+      },
+      "description": "打开标签页快速切换"
+    }
+  }
 } 

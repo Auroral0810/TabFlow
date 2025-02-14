@@ -73,20 +73,27 @@
         groupedTabs = [...groupedTabs, ...domainGroups];
         break;
       case 'time':
-        // console.log('按时间分组处理开始');
-        const timeGroups = tabGroupService.groupByLastAccess(unpinnedTabs.map(tab => {
-          const memoryInfo = memoryService.getTabMemoryStats(tab.id);
-          const lastAccessed = tab?.lastAccessed || Date.now();
-          // console.log(`标签页 ${tab.id} - ${tab.title}`);
-          // console.log(`最后访问时间: ${new Date(lastAccessed).toLocaleString()}`);
-          // console.log(`内存信息:`, memoryInfo);
-          return {
-            ...tab,
-            lastAccessed
-          };
-        }));
-        // console.log('分组结果:', timeGroups);
+        const timeGroups = tabGroupService.groupByLastAccess(unpinnedTabs);
         groupedTabs = [...groupedTabs, ...timeGroups];
+        break;
+      case 'category':  // 新的分组模式
+        // 按分类对标签页进行分组
+        const categoryGroups = {};
+        for (const tab of unpinnedTabs) {
+          const category = tab.category || '未分类';  // 使用已有的分类信息
+          if (!categoryGroups[category]) {
+            categoryGroups[category] = [];
+          }
+          categoryGroups[category].push(tab);
+        }
+        
+        // 转换为数组格式
+        for (const [category, tabs] of Object.entries(categoryGroups)) {
+          groupedTabs.push({
+            title: category,
+            tabs: tabs
+          });
+        }
         break;
       default:
         if (unpinnedTabs.length > 0) {
@@ -268,8 +275,7 @@
           <option value="none">不分组</option>
           <option value="domain">按网站分组</option>
           <option value="time">按时间分组</option>
-          <option value="smart">智能分类</option>
-          <option value="custom">自定义分类</option>
+          <option value="category">按分类分组</option>
         </select>
         
         <div class="flex gap-2">

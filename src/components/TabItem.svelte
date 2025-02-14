@@ -27,6 +27,7 @@
   let faviconUrl = '';
   let cachedFavicon = new Map();
   let isHibernated = false;
+  let isLoadingCategory = true;
   
   onMount(async () => {
     isMuted = tab.mutedInfo?.muted || false;
@@ -36,9 +37,25 @@
   });
 
   onMount(async () => {
-    await categoryService.initialize();
-    predictedCategory = await categoryService.predictCategory(tab);
-    await updateFavicon();
+    console.log('TabItem mounted, initializing category service...');
+    try {
+      const initialized = await categoryService.initialize();
+      console.log('Category service initialization result:', initialized);
+      
+      if (!initialized) {
+        console.warn('分类服务初始化失败，使用降级方案');
+      }
+      
+      console.log('Predicting category for tab:', tab);
+      predictedCategory = await categoryService.predictCategory(tab);
+      console.log('Predicted category:', predictedCategory);
+      
+    } catch (error) {
+      console.error('分类失败:', error);
+      predictedCategory = '其他';
+    } finally {
+      isLoadingCategory = false;
+    }
   });
 
   async function checkBookmarkStatus() {
@@ -120,6 +137,7 @@
   }
 
   async function updateCategory(newCategory) {
+    console.log('Updating category to:', newCategory);
     predictedCategory = newCategory;
     await categoryService.trainOnUserFeedback(tab, newCategory);
   }
@@ -179,6 +197,20 @@
       console.error('切换休眠状态失败:', error);
     }
   }
+
+  function getColorClass(category) {
+    const categoryClasses = {
+      '学习': 'bg-blue-100 text-blue-800',
+      '购物': 'bg-green-100 text-green-800',
+      '工作': 'bg-purple-100 text-purple-800',
+      '社交': 'bg-yellow-100 text-yellow-800',
+      '娱乐': 'bg-pink-100 text-pink-800',
+      '新闻': 'bg-gray-100 text-gray-800',
+      '开发': 'bg-indigo-100 text-indigo-800',
+      '其他': 'bg-gray-100 text-gray-600'
+    };
+    return categoryClasses[category] || categoryClasses['其他'];
+  }
 </script>
 
 <div 
@@ -235,12 +267,15 @@
         >
           {tab.url}
         </div>
-        <button
-          class="text-xs px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 truncate max-w-[100px] flex-shrink-0"
-          on:click|stopPropagation={() => showCategorySelect = !showCategorySelect}
-        >
-          {currentCategory}
-        </button>
+        <div class="flex items-center space-x-2">
+          {#if isLoadingCategory}
+            <span class="text-xs text-gray-500">分类中...</span>
+          {:else}
+            <span class="category-tag category-{predictedCategory}">
+              {predictedCategory}
+            </span>
+          {/if}
+        </div>
       </div>
     </div>
   </div>
@@ -249,16 +284,7 @@
     {#if showMemory}
       <MemoryStats tabId={tab.id} />
     {/if}
-    
-    {#if showNotes}
-      <button
-        class="p-1 hover:bg-gray-200 rounded text-gray-500"
-        on:click={onAddNote}
-        title="添加备注"
-      >
-        📝
-      </button>
-    {/if}
+
 
     <button
       class="p-1 hover:bg-gray-200 rounded {isHibernated ? 'text-blue-500' : 'text-gray-500'}"
@@ -294,15 +320,17 @@
   </div>
 
   {#if showCategorySelect}
-    <select
-      bind:value={predictedCategory}
-      on:change={(e) => updateCategory(e.target.value)}
-      class="ml-2 text-sm border rounded"
-    >
-      {#each categoryService.categories as category}
-        <option value={category}>{category}</option>
-      {/each}
-    </select>
+    <div class="absolute right-0 mt-1 bg-white border rounded shadow-lg z-10">
+      <select
+        bind:value={predictedCategory}
+        on:change={(e) => updateCategory(e.target.value)}
+        class="w-full text-sm p-1"
+      >
+        {#each categoryService.categories as category}
+          <option value={category}>{category}</option>
+        {/each}
+      </select>
+    </div>
   {/if}
 </div>
 
@@ -312,4 +340,17 @@
     white-space: normal;
     word-break: break-all;
   }
-</style> 
+
+  .category-tag {
+    @apply text-xs px-2 py-1 rounded-full;
+  }
+  
+  .category-学习 { @apply bg-blue-100 text-blue-800; }
+  .category-购物 { @apply bg-green-100 text-green-800; }
+  .category-工作 { @apply bg-purple-100 text-purple-800; }
+  .category-社交 { @apply bg-yellow-100 text-yellow-800; }
+  .category-娱乐 { @apply bg-pink-100 text-pink-800; }
+  .category-新闻 { @apply bg-gray-100 text-gray-800; }
+  .category-开发 { @apply bg-indigo-100 text-indigo-800; }
+  .category-其他 { @apply bg-gray-100 text-gray-600; }
+</style>  
