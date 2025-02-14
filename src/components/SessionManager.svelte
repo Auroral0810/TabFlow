@@ -5,7 +5,7 @@
   import AlertDialog from './AlertDialog.svelte';
   import CreateSessionDialog from './CreateSessionDialog.svelte';
   
-  let sessionService = new SessionService();
+  const sessionService = new SessionService();
   let sessions = [];
   let sessionName = '';
   let editingSession = null;
@@ -17,6 +17,7 @@
   let newTabTitle = '';
   let isLoggedIn = false;
   let showCreateDialog = false;
+  let currentUser = null;
   
   // 确认对话框状态
   let confirmDialog = {
@@ -44,24 +45,32 @@
     onConfirm: () => {}
   };
 
-  onMount(async () => {
+  // 添加刷新会话列表的函数
+  async function refreshSessions() {
     sessions = await sessionService.getSessions();
+  }
+
+  onMount(async () => {
+    isLoggedIn = sessionService.isLoggedIn();
+    currentUser = sessionService.getCurrentUser();
+    await refreshSessions();  // 初始加载会话
   });
   
   async function saveCurrentSession() {
     if (!sessionName.trim()) {
-      alert('请输入会话名称');
+      showAlert('提示', '请输入会话名称');
       return;
     }
 
     try {
       const tabs = await chrome.tabs.query({ currentWindow: true });
       await sessionService.saveSession(sessionName, tabs);
-      sessions = await sessionService.getSessions();
+      await refreshSessions();
       sessionName = '';
+      showAlert('成功', '会话已保存');
     } catch (error) {
       console.error('保存会话失败:', error);
-      alert('保存会话失败');
+      showAlert('错误', '保存会话失败');
     }
   }
   
@@ -304,14 +313,31 @@
   async function handleSync() {
     try {
       if (!isLoggedIn) {
-        await sessionService.signIn();
+        showAlert('登录中', '正在登录...');
+        currentUser = await sessionService.signIn();
         isLoggedIn = true;
+        await refreshSessions();
+      } else {
+        showAlert('同步中', '正在同步数据...');
+        await sessionService.syncToCloud();
+        await refreshSessions();
       }
-      await sessionService.syncToCloud();
-      showAlert('同步成功', '数据已成功同步到云端');
+      showAlert('成功', '数据同步完成');
     } catch (error) {
       console.error('同步失败:', error);
-      showAlert('同步失败', error.message);
+      showAlert('错误', error.message || '同步失败');
+    }
+  }
+
+  async function handleSignOut() {
+    try {
+      await sessionService.signOut();
+      isLoggedIn = false;
+      currentUser = null;
+      await refreshSessions();
+      showAlert('成功', '已登出');
+    } catch (error) {
+      showAlert('错误', '登出失败');
     }
   }
 
@@ -331,7 +357,33 @@
 <div class="h-full flex flex-col">
   <div class="flex justify-between items-center mb-4">
     <h2 class="text-xl font-bold">会话管理</h2>
-    <div class="flex space-x-2">
+    <div class="flex items-center gap-4">
+      {#if isLoggedIn && currentUser}
+        <div class="flex items-center gap-2">
+          <span class="text-sm text-gray-600">
+            当前用户: {currentUser.displayName || currentUser.email}
+          </span>
+          <button 
+            class="bg-blue-500 text-white px-4 py-2 rounded"
+            on:click={handleSync}
+          >
+            同步
+          </button>
+          <button 
+            class="bg-red-500 text-white px-4 py-2 rounded"
+            on:click={handleSignOut}
+          >
+            登出
+          </button>
+        </div>
+      {:else}
+        <button 
+          class="bg-blue-500 text-white px-4 py-2 rounded"
+          on:click={handleSync}
+        >
+          登录并同步
+        </button>
+      {/if}
       <button
         on:click={() => {
           editingSession = null;
@@ -340,12 +392,6 @@
         class="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600"
       >
         新建会话
-      </button>
-      <button
-        on:click={handleSync}
-        class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
-      >
-        {isLoggedIn ? '同步' : '登录并同步'}
       </button>
     </div>
   </div>
@@ -359,10 +405,7 @@
           class="px-3 py-2 border rounded-lg mr-2 flex-1"
         />
         <button
-          on:click={() => {
-            editingSession = null;
-            showCreateDialog = true;
-          }}
+          on:click={saveCurrentSession}
           class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600"
         >
           保存当前会话

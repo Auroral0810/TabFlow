@@ -10,121 +10,141 @@ import {
 import { 
   GoogleAuthProvider,
   signInWithCredential,
-  signInWithPopup
+  signInWithRedirect,
+  getRedirectResult,
+  signInWithPopup,
+  browserPopupRedirectResolver
 } from 'firebase/auth';
 import { openDB } from 'idb';
 
 export class SessionService {
   constructor() {
     this.storageKey = 'tabSessions';
+    this.currentToken = null;
   }
 
-  // 修改登录方法
   async signIn() {
     try {
-      console.log('开始登录流程...');
-      if (typeof chrome !== 'undefined' && chrome.identity) {
-        console.log('检测到 Chrome 扩展环境');
-        return new Promise((resolve, reject) => {
-          // 简化 auth_params，移除 client_id
-          const auth_params = {
-            interactive: true
-          };
-
-          chrome.identity.getAuthToken(auth_params, async function(token) {
-            if (chrome.runtime.lastError) {
-              console.error('Chrome 认证错误:', chrome.runtime.lastError);
-              return reject(chrome.runtime.lastError);
-            }
-
-            try {
-              // 使用获取到的 token 创建 Firebase 凭证
-              const credential = GoogleAuthProvider.credential(null, token);
-              const result = await signInWithCredential(auth, credential);
-              console.log('Firebase 登录成功:', result.user.email);
-              resolve(result.user);
-            } catch (error) {
-              console.error('Firebase 认证错误:', error);
-              if (error.code === 'auth/invalid-credential') {
-                chrome.identity.removeCachedAuthToken({ token }, () => {
-                  console.log('已清除失效的 token');
-                });
-              }
-              reject(error);
-            }
-          });
+      console.log('=== 登录流程开始 ===');
+      
+      if (this.currentToken) {
+        console.log('1. 移除现有 token...');
+        await new Promise((resolve) => {
+          chrome.identity.removeCachedAuthToken({ 
+            token: this.currentToken 
+          }, resolve);
         });
-      } else {
-        throw new Error('此功能仅支持在 Chrome 扩展中使用');
       }
+      
+      console.log('2. 请求新的 token...');
+      const token = await new Promise((resolve, reject) => {
+        chrome.identity.getAuthToken({ 
+          interactive: true
+        }, (token) => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+          } else {
+            this.currentToken = token;
+            resolve(token);
+          }
+        });
+      });
+
+      console.log('3. 创建凭证...');
+      const credential = GoogleAuthProvider.credential(null, token);
+      
+      console.log('4. 登录 Firebase...');
+      const result = await signInWithCredential(auth, credential);
+      console.log('登录成功:', result.user.email);
+      
+      // 登录后立即从云端同步数据到本地
+      await this.syncFromCloud();
+      
+      return result.user;
     } catch (error) {
-      console.error('登录过程发生错误:', error);
+      console.error('登录失败:', error);
       throw error;
     }
   }
 
-  // 检查登录状态
+  async signOut() {
+    try {
+      if (this.currentToken) {
+        await new Promise((resolve) => {
+          chrome.identity.removeCachedAuthToken({ 
+            token: this.currentToken 
+          }, resolve);
+        });
+        this.currentToken = null;
+      }
+      await auth.signOut();
+    } catch (error) {
+      console.error('登出失败:', error);
+      throw error;
+    }
+  }
+
   isLoggedIn() {
     return auth.currentUser !== null;
   }
 
-  // 获取当前用户
   getCurrentUser() {
     return auth.currentUser;
   }
 
-  // 同步到云端
-  async syncToCloud() {
+  // 从云端同步数据到本地
+  async syncFromCloud() {
+    if (!this.isLoggedIn()) {
+      throw new Error('请先登录');
+    }
+
     try {
-      const user = auth.currentUser;
-      if (!user) throw new Error('请先登录');
+      const userId = auth.currentUser.uid;
+      // 获取云端数据
+      const sessionsRef = collection(db, `users/${userId}/sessions`);
+      const querySnapshot = await getDocs(query(sessionsRef));
+      
+      // 将云端数据转换为本地格式
+      const cloudSessions = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
 
-      const sessions = await this.getSessions();
-      const userSessionsRef = collection(db, `users/${user.uid}/sessions`);
-
-      // 清除旧数据
-      const oldDocs = await getDocs(userSessionsRef);
-      for (const doc of oldDocs.docs) {
-        await deleteDoc(doc.ref);
-      }
-
-      // 上传新数据
-      for (const session of sessions) {
-        await addDoc(userSessionsRef, {
-          ...session,
-          timestamp: Date.now()
-        });
-      }
-
-      console.log('同步到云端成功');
+      // 替换本地存储的数据
+      await chrome.storage.local.set({ [this.storageKey]: cloudSessions });
+      
+      return cloudSessions;
     } catch (error) {
-      console.error('同步到云端失败:', error);
+      console.error('从云端同步失败:', error);
       throw error;
     }
   }
 
-  // 从云端同步
-  async syncFromCloud() {
+  // 同步到云端
+  async syncToCloud() {
+    if (!this.isLoggedIn()) {
+      throw new Error('请先登录');
+    }
+
     try {
-      const user = auth.currentUser;
-      if (!user) throw new Error('请先登录');
-
-      const userSessionsRef = collection(db, `users/${user.uid}/sessions`);
-      const snapshot = await getDocs(userSessionsRef);
+      const userId = auth.currentUser.uid;
+      // 获取本地数据
+      const { [this.storageKey]: sessions } = await chrome.storage.local.get(this.storageKey);
       
-      const sessions = snapshot.docs.map(doc => ({
-        ...doc.data(),
-        id: doc.id
-      }));
+      // 清除现有云端数据
+      const sessionsRef = collection(db, `users/${userId}/sessions`);
+      const existingDocs = await getDocs(query(sessionsRef));
+      for (const doc of existingDocs.docs) {
+        await deleteDoc(doc.ref);
+      }
 
-      await chrome.storage.local.set({
-        [this.storageKey]: sessions
-      });
-
-      console.log('从云端同步成功');
-      return sessions;
+      // 上传本地数据到云端
+      for (const session of sessions || []) {
+        const { id, ...sessionData } = session;
+        await addDoc(sessionsRef, sessionData);
+      }
     } catch (error) {
-      console.error('从云端同步失败:', error);
+      console.error('同步到云端失败:', error);
       throw error;
     }
   }
@@ -159,11 +179,6 @@ export class SessionService {
       await chrome.storage.local.set({
         [this.storageKey]: sessions
       });
-
-      // 如果用户已登录，同步到云端
-      if (auth.currentUser) {
-        await this.syncToCloud();
-      }
 
       return newSession;
     } catch (error) {
